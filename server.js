@@ -9,7 +9,8 @@ var morgan     = require('morgan'); 		// used to see requests
 var mongoose   = require('mongoose');
 var User       = require('./app/models/user');
 var port       = process.env.PORT || 8080; // set the port for our app
-var uriUtil = require('mongodb-uri');
+var jwt 	   = require('jsonwebtoken');
+var superSecret= 'manwhobuggeredaheron';
 
 // APP CONFIGURATION ---------------------
 // use body parser so we can grab information from POST requests
@@ -47,13 +48,114 @@ app.get('/', function(req, res) {
 // get an instance of the express router
 var apiRouter = express.Router();
 
+//route for authenticating users (POST http://localhost:8080/api/authenticate)
+
+
+apiRouter.post('/authenticate', function(req, res) {
+
+		// find the user
+		// select the name username and password explicitly
+		User.findOne({
+			username: req.body.username
+		   }).select('firstname username password').exec(function(err, user) {
+
+		   	if (err) throw err;
+
+		   	// no user with that username was found
+			if (!user) { 
+			  res.json({
+
+				success: false,
+				message: 'Authentication failed. User not found.'
+
+			});
+		} else if (user) {
+
+			//check if pasword matches
+
+			var validPassword = user.comparePassword(req.body.password);
+			if (!validPassword) {
+
+				res.json({
+
+					sucess: false,
+					message: "Authentication failed.Wrong password."
+				});
+			} else {
+
+			 	// user found and correct password create a token
+
+			 	 var token = jwt.sign({
+
+			 	 	name: user.firstname,
+			 	 	username: user.username
+
+			 	 }, superSecret, {
+
+			 	 	expiresInMinutes: 1440 // expires in 24 hrs
+			 	 });
+
+			 	 // return the information including token as JSON
+				res.json({
+				success: true,
+				message: 'Enjoy your token!', 
+				token: token
+			  })
+			}
+	   	}
+
+	});
+
+});
+
+
 // middleware to use for all requests
 apiRouter.use(function(req, res, next) {
+
+
+	//check  header or url parameters or post parameters for token
+
+	var token = req.body.token || req.query.token || req.headers['x-access-token'];
+
+	//deconde token
+
+	if (token) {
+
+		//verifies secret and checks exp
+
+		jwt.verify(token, superSecret, function(err, decoded) {
+
+			if (err) {
+
+				return res.status(403).send({
+
+					success: false,
+					message: "Failed to authenticate token."
+				});
+			} else {
+				// if everything is good, save to request for use in other routes
+			  req.decoded = decoded;
+
+			  next();
+
+			}
+		});
+
+	} else {
+		// if there is no token
+		// return an HTTP response of 403 (access forbidden) and an error message return res.status(403).send({
+		return res.status(403).send({
+			success: false,
+  			message: 'No token provided.'
+		});
+	}
+
 	// do logging
 	console.log('Somebody just came to our app!');
-
-	next(); // make sure we go to the next routes and don't stop here
+	 // make sure we go to the next routes and don't stop here
 });
+
+
 
 // test route to make sure everything is working 
 // accessed at GET http://localhost:8080/api
@@ -159,6 +261,15 @@ apiRouter.route('/users/:user_id')
 			res.json({ message: 'Successfully deleted' });
 		});
 	});
+
+
+// api end point to get user information
+
+apiRouter.get('/me', function(req,res) {
+
+	res.send(req.decoded);
+
+});
 
 // REGISTER OUR ROUTES -------------------------------
 app.use('/api', apiRouter);
